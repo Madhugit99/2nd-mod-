@@ -6,47 +6,13 @@ export default function HomePage() {
   const [ethWallet, setEthWallet] = useState(undefined);
   const [account, setAccount] = useState(undefined);
   const [atm, setATM] = useState(undefined);
-  const [balance, setBalance] = useState(0);
-  const [captcha, setCaptcha] = useState([]);
-  const [userInput, setUserInput] = useState("");
-  const [captchaSubmitted, setCaptchaSubmitted] = useState(false);
+  const [balance, setBalance] = useState(undefined);
+  const [transactionHistory, setTransactionHistory] = useState([]);
+  const [selectedOption, setSelectedOption] = useState(null);
+  const [transactionValue, setTransactionValue] = useState("");
 
   const contractAddress = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
   const atmABI = atm_abi.abi;
-
-  const generateCaptcha = () => {
-    const characters = Array.from({ length: 4 }, (_, index) => ({
-      value: generateRandomCharacter(index),
-      style: generateRandomStyle(),
-    }));
-
-    return characters;
-  };
-
-  const generateRandomCharacter = (index) => {
-    if (index % 2 === 0) {
-      return String.fromCharCode(65 + Math.floor(Math.random() * 26)); // Uppercase letter
-    } else {
-      return Math.floor(Math.random() * 10).toString(); // Number
-    }
-  };
-
-  const generateRandomStyle = () => {
-    return {
-      color: getRandomColor(),
-      fontWeight: getRandomFontWeight(),
-    };
-  };
-
-  const getRandomColor = () => {
-    const colors = ["#ff6347", "#4682b4", "#32cd32", "#ba55d3"]; // List of colors
-    return colors[Math.floor(Math.random() * colors.length)];
-  };
-
-  const getRandomFontWeight = () => {
-    const fontWeights = ["normal", "bold", "bolder"]; // List of font weights
-    return fontWeights[Math.floor(Math.random() * fontWeights.length)];
-  };
 
   const getWallet = async () => {
     if (window.ethereum) {
@@ -55,21 +21,15 @@ export default function HomePage() {
 
     if (ethWallet) {
       const accounts = await ethWallet.request({ method: "eth_accounts" });
-      handleAccount(accounts[0]);
+      handleAccount(accounts);
     }
   };
 
-  useEffect(() => {
-    // Generate captcha and set initial balance when component mounts
-    setCaptcha(generateCaptcha());
-    getWallet();
-    getBalance(); // Added to fetch and set the initial balance
-  }, []);
-
-  const handleAccount = (account) => {
-    if (account) {
-      console.log("Account connected: ", account);
-      setAccount(account);
+  const handleAccount = (accounts) => {
+    const selectedAccount = accounts[0];
+    if (selectedAccount) {
+      console.log("Account connected: ", selectedAccount);
+      setAccount(selectedAccount);
     } else {
       console.log("No account found");
     }
@@ -82,9 +42,9 @@ export default function HomePage() {
     }
 
     const accounts = await ethWallet.request({ method: "eth_requestAccounts" });
-    handleAccount(accounts[0]);
+    handleAccount(accounts);
 
-    // once wallet is set, get a reference to our deployed contract
+    // Once the wallet is set, get a reference to the deployed contract
     getATMContract();
   };
 
@@ -98,120 +58,135 @@ export default function HomePage() {
 
   const getBalance = async () => {
     if (atm) {
-      const currentBalance = await atm.getBalance();
-      setBalance(currentBalance.toNumber());
+      try {
+        const balance = await atm.getBalance();
+        setBalance(balance.toNumber());
+      } catch (error) {
+        console.error("Error getting balance:", error);
+      }
     }
   };
 
-  const deposit = async () => {
-    if (atm && captchaSubmitted) {
-      let tx = await atm.deposit(1);
-      await tx.wait();
+  const updateTransactionHistory = (action, amount) => {
+    const date = new Date().toLocaleString();
+    const transaction = {
+      action,
+      amount,
+      date,
+    };
+    setTransactionHistory((prevHistory) => [...prevHistory, transaction]);
+  };
+
+  const generateBill = () => {
+    if (balance === undefined) {
+      alert("Balance information is not available");
+      return;
+    }
+
+    const date = new Date().toLocaleString();
+    alert(`Remaining Balance: ${balance} ETH\nTransaction History:\n${formatTransactionHistory()}\nDate: ${date}`);
+  };
+
+  const formatTransactionHistory = () => {
+    return transactionHistory.map((transaction, index) => {
+      return `${index + 1}. ${transaction.action} - ${transaction.amount} ETH (${transaction.date})`;
+    }).join('\n');
+  };
+
+  const initUser = () => {
+    // Check to see if the user has Metamask
+    if (!ethWallet) {
+      return <p>Please install Metamask to use this ATM.</p>;
+    }
+
+    // Check if the user is connected. If not, connect to their account
+    if (!account) {
+      return <button onClick={connectAccount}>Connect your Metamask wallet</button>;
+    }
+
+    if (balance === undefined) {
       getBalance();
-    } else {
-      alert("Please submit the captcha before performing a deposit.");
+    }
+
+    return (
+      <div>
+        <p>Your Account: {account}</p>
+        <p>Your Balance: {balance}</p>
+        <button onClick={() => setSelectedOption("Banking")}>Banking</button>
+      </div>
+    );
+  };
+
+  const renderOptionContent = () => {
+    if (selectedOption === "Banking") {
+      return (
+        <div>
+          <label>
+            Enter amount:
+            <input type="number" placeholder="Enter amount" value={transactionValue} onChange={(e) => setTransactionValue(e.target.value)} />
+          </label>
+          <button onClick={() => performTransaction("Deposit", transactionValue)}>Deposit</button>
+          <button onClick={() => performTransaction("Withdrawal", transactionValue)}>Withdraw</button>
+          <button onClick={generateBill}>Generate Bill</button>
+        </div>
+      );
+    }
+    return null;
+  };
+
+  const performTransaction = async (action, amount) => {
+    if (!amount) {
+      alert("Please enter a valid amount");
+      return;
+    }
+
+    if (atm) {
+      try {
+        let tx;
+        if (action === "Deposit") {
+          tx = await atm.deposit(amount);
+        } else if (action === "Withdrawal") {
+          tx = await atm.withdraw(amount);
+        }
+
+        await tx.wait();
+        getBalance();
+        updateTransactionHistory(action, amount);
+      } catch (error) {
+        console.error("Error performing transaction:", error);
+      }
     }
   };
 
-  const withdraw = async () => {
-    if (atm && captchaSubmitted) {
-      let tx = await atm.withdraw(1);
-      await tx.wait();
-      getBalance();
-    } else {
-      alert("Please submit the captcha before performing a withdrawal.");
-    }
-  };
-
-  const handleCaptchaChange = (event) => {
-    setUserInput(event.target.value);
-  };
-
-  const handleSubmit = () => {
-    if (userInput === captcha.map((char) => char.value).join("")) {
-      alert("Captcha verified! You can now deposit or withdraw.");
-      setCaptchaSubmitted(true);
-    } else {
-      alert("Incorrect captcha. Please try again.");
-    }
-  };
-
-  const regenerateCaptcha = () => {
-    setCaptcha(generateCaptcha());
-    setUserInput("");
-    setCaptchaSubmitted(false);
-  };
+  useEffect(() => {
+    getWallet();
+  }, []);
 
   return (
     <main className="container">
       <header>
         <h1>Welcome to the Metacrafters ATM!</h1>
       </header>
-      <div className="atm-container">
-        {!account ? (
-          <button onClick={connectAccount}>Please connect your Metamask wallet</button>
-        ) : (
-          <div className="user-info">
-            <p>Your Account: {account}</p>
-            <p>Your Balance: {balance}</p>
-            <div className="captcha-section">
-              <p>Captcha:</p>
-              {captcha.map((char, index) => (
-                <span key={index} style={char.style}>
-                  {char.value}
-                </span>
-              ))}
-              <button onClick={regenerateCaptcha} disabled={captchaSubmitted}>
-                Regenerate Captcha
-              </button>
-              <input type="text" value={userInput} onChange={handleCaptchaChange} />
-              <button onClick={handleSubmit}>Submit Captcha</button>
-            </div>
-            <button onClick={deposit} disabled={!captchaSubmitted}>
-              Deposit 1 ETH
-            </button>
-            <button onClick={withdraw} disabled={!captchaSubmitted}>
-              Withdraw 1 ETH
-            </button>
-          </div>
-        )}
-      </div>
+      {initUser()}
+      {renderOptionContent()}
       <style jsx>{`
         .container {
           text-align: center;
-        }
-
-        .atm-container {
-          background-color: #fff0e6; /* Eburnean */
-          border: 2px solid #000;
-          border-radius: 10px;
+          background-color: #4B5162; /* Light Navy Blue */
+          color: white;
           padding: 20px;
-          margin: 20px;
         }
-
-        .user-info {
-          /* Add any additional styles for the user info section */
+        button {
+          margin: 8px;
         }
-
-        .captcha-section {
-          display: flex;
-          align-items: center;
-
-          p {
-            margin-right: 10px;
-          }
-
-          span {
-            margin-right: 5px;
-          }
-
-          input {
-            margin-right: 10px;
-          }
-
-          button {
-            margin-right: 10px;
-          }
+        label {
+          display: block;
+          margin-bottom: 8px;
+        }
+        input {
+          width: 100%;
+          padding: 8px;
+          box-sizing: border-box;
         }
       `}</style>
     </main>
